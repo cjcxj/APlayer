@@ -28,10 +28,7 @@ class SmbDataSource : BaseDataSource(true) {
     private var session: Session? = null
     private var diskShare: DiskShare? = null
     private var file: File? = null
-
-    // 🚀 优化：使用缓冲流来减少网络 IO 次数
     private var bufferedInputStream: InputStream? = null
-
     private var dataSpec: DataSpec? = null
     private var bytesRemaining: Long = 0
     private var opened: Boolean = false
@@ -63,14 +60,14 @@ class SmbDataSource : BaseDataSource(true) {
                 }
             }
 
-            // 🚀 优化 1：配置 SmbConfig
-            // 禁用签名(Signing)可以显著提高传输速度（局域网通常安全）。
-            // 增大缓冲区和超时时间。
+            // ✅ 均衡配置：兼容性优先，兼顾速度
             val config = SmbConfig.builder()
+                .withMultiProtocolNegotiate(true) // 恢复自动协商
+                .withSigningRequired(false)       // 关闭签名提速
+                .withDfsEnabled(false)            // 关闭DFS提速
+                .withBufferSize(1024 * 1024)      // 1MB 传输块提速
                 .withTimeout(120, TimeUnit.SECONDS)
                 .withSoTimeout(180, TimeUnit.SECONDS)
-                .withSigningRequired(false) // ⚡ 关键：关闭签名验证
-                .withDfsEnabled(false)      // 如果不用 DFS，关闭可加快连接
                 .build()
 
             client = SMBClient(config)
@@ -84,7 +81,7 @@ class SmbDataSource : BaseDataSource(true) {
             val shareName = pathSegments[0]
             val filePath = pathSegments.drop(1).joinToString("\\")
 
-            Timber.d("SMB Connecting (Buffered): Host=$host, Path=$filePath")
+            Timber.d("SMB Connect: Host=$host, Path=$filePath")
 
             diskShare = session?.connectShare(shareName) as? DiskShare
             if (diskShare == null) throw IOException("Connect share failed")
@@ -93,16 +90,14 @@ class SmbDataSource : BaseDataSource(true) {
                 throw IOException("File not found: $filePath")
             }
 
-            val accessMask = setOf(
-                AccessMask.FILE_READ_DATA,
-                AccessMask.FILE_READ_ATTRIBUTES,
-                AccessMask.FILE_READ_EA
-            )
-            val shareMode = setOf(
-                SMB2ShareAccess.FILE_SHARE_READ,
-                SMB2ShareAccess.FILE_SHARE_WRITE,
-                SMB2ShareAccess.FILE_SHARE_DELETE
-            )
+            // ✅ 权限设置：解决 Access Denied
+            val accessMask: MutableSet<AccessMask> = HashSet()
+            accessMask.add(AccessMask.GENERIC_READ) // 万能读取权限
+
+            val shareMode: MutableSet<SMB2ShareAccess> = HashSet()
+            shareMode.add(SMB2ShareAccess.FILE_SHARE_READ)
+            shareMode.add(SMB2ShareAccess.FILE_SHARE_WRITE)
+            shareMode.add(SMB2ShareAccess.FILE_SHARE_DELETE)
 
             val smbFile = diskShare!!.openFile(
                 filePath,
@@ -120,17 +115,13 @@ class SmbDataSource : BaseDataSource(true) {
                 throw IOException("Position out of range")
             }
 
-            // 🚀 优化 2：创建缓冲输入流
-            // 默认 smbj 的 read 是一次网络请求对应一次读取。
-            // 这里我们用 64KB 的 Buffer，意味着每 64KB 数据才请求一次网络，
-            // 哪怕 ExoPlayer 每次只读 1KB，也会非常快。
+            // ✅ 缓冲流：解决卡顿
             val rawStream = smbFile.inputStream
-            // skip 到指定位置 (断点续传或 Seek)
             if (dataSpec.position > 0) {
                 rawStream.skip(dataSpec.position)
             }
-            // 包装流
-            bufferedInputStream = BufferedInputStream(rawStream, 64 * 1024)
+            // 512KB 内存缓冲
+            bufferedInputStream = BufferedInputStream(rawStream, 512 * 1024)
 
             bytesRemaining = if (dataSpec.length == C.LENGTH_UNSET.toLong()) {
                 fileSize - dataSpec.position
@@ -159,7 +150,6 @@ class SmbDataSource : BaseDataSource(true) {
                 minOf(bytesRemaining, readLength.toLong()).toInt()
             }
 
-            // 使用 bufferedInputStream 读取
             val bytesRead = bufferedInputStream!!.read(buffer, offset, bytesToRead)
 
             if (bytesRead > 0) {
@@ -190,7 +180,6 @@ class SmbDataSource : BaseDataSource(true) {
     private fun cleanup() {
         try { bufferedInputStream?.close() } catch (e: Exception) {}
         bufferedInputStream = null
-
         try { file?.close() } catch (e: Exception) {}
         file = null
         try { diskShare?.close() } catch (e: Exception) {}
