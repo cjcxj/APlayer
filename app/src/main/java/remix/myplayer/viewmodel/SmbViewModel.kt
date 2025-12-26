@@ -7,6 +7,7 @@ import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.smbj.SMBClient
 import com.hierynomus.smbj.auth.AuthenticationContext
 import com.hierynomus.smbj.share.DiskShare
+import com.hierynomus.smbj.session.Session
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,13 +63,14 @@ class SmbViewModel @Inject constructor(
         val files = fileInfos.map {
           SmbFile(
             name = it.fileName,
-            isDirectory = it.fileAttributes_Long and 16L != 0L, // Directory attribute
+            // 修复: 安全转换为 Long 再进行位运算判断是否为文件夹 (0x10 是 FILE_ATTRIBUTE_DIRECTORY)
+            isDirectory = (it.fileAttributes.toLong() and 16L) != 0L,
             path = if (path.isEmpty()) it.fileName else "$path\\${it.fileName}",
             size = it.endOfFile,
             lastModified = it.changeTime.toEpochMillis()
           )
         }.filter { it.name != "." && it.name != ".." }
-        
+
         // Close resources
         diskShare.close()
         session.close()
@@ -149,9 +151,22 @@ class SmbViewModel @Inject constructor(
         pwd = editSmb?.pwd ?: it.pwd,
         server = editSmb?.server ?: it.server,
         share = editSmb?.share ?: it.share,
-        editSmb = editSmb
+        editSmb = editSmb,
+        availableShares = emptyList(),
+        isLoadingShares = false,
+        showShareSelection = false
       )
     }
+  }
+
+  fun dismissShareSelection() {
+    _addSmbState.update { it.copy(showShareSelection = false) }
+  }
+
+  fun listShares() {
+    val state = _addSmbState.value
+    if (state.server.isEmpty()) return
+    remix.myplayer.ui.nav.MessageNotifier.show("此版本不支持自动检测共享。请手动输入共享名称。")
   }
 }
 
@@ -164,13 +179,16 @@ data class AddSmbState(
   val account: String = "",
   val pwd: String = "",
   val server: String = "",
-  val share: String = ""
+  val share: String = "",
+  val availableShares: List<String> = emptyList(),
+  val isLoadingShares: Boolean = false,
+  val showShareSelection: Boolean = false
 )
 
 data class SmbFile(
-    val name: String,
-    val isDirectory: Boolean,
-    val path: String,
-    val size: Long,
-    val lastModified: Long
+  val name: String,
+  val isDirectory: Boolean,
+  val path: String,
+  val size: Long,
+  val lastModified: Long
 )
