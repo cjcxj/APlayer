@@ -32,7 +32,7 @@ class SmbMediaDataSource(private val uriString: String) : MediaDataSource() {
     private var fileSize: Long = -1
 
     private var lastReadEndPosition: Long = 0
-    // 🚀 优化：使用 InputStream 接口而不是具体类，方便套 BufferedInputStream
+
     private var inputStream: InputStream? = null
 
     init {
@@ -69,12 +69,12 @@ class SmbMediaDataSource(private val uriString: String) : MediaDataSource() {
             }
         }
 
-        // 🚀 优化：配置 SmbConfig，禁用签名以提速，增加超时
+
         val config = SmbConfig.builder()
             .withMultiProtocolNegotiate(true)
-            .withSigningRequired(false) // 关键：禁用签名
+            .withSigningRequired(false)
             .withDfsEnabled(false)
-            .withTimeout(60, TimeUnit.SECONDS) // 解析元数据不需要太长超时
+            .withTimeout(60, TimeUnit.SECONDS)
             .withSoTimeout(60, TimeUnit.SECONDS)
             .build()
 
@@ -92,11 +92,11 @@ class SmbMediaDataSource(private val uriString: String) : MediaDataSource() {
         diskShare = session?.connectShare(shareName) as? DiskShare
         if (diskShare == null) throw IOException("Connect share failed")
 
-        // ✅ 权限修复：使用 GENERIC_READ 解决 0xc0000022
+
         val accessMask: MutableSet<AccessMask> = HashSet()
         accessMask.add(AccessMask.GENERIC_READ)
 
-        // ✅ 权限修复：允许共享读写删除
+
         val shareMode: MutableSet<SMB2ShareAccess> = HashSet()
         shareMode.add(SMB2ShareAccess.FILE_SHARE_READ)
         shareMode.add(SMB2ShareAccess.FILE_SHARE_WRITE)
@@ -113,7 +113,7 @@ class SmbMediaDataSource(private val uriString: String) : MediaDataSource() {
 
         fileSize = file?.fileInformation?.standardInformation?.endOfFile ?: -1
 
-        // 🚀 优化：使用 BufferedInputStream (64KB)，显著加快元数据解析速度
+
         val rawStream = file?.inputStream
         if (rawStream != null) {
             inputStream = BufferedInputStream(rawStream, 64 * 1024)
