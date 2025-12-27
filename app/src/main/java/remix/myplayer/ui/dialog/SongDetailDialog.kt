@@ -11,6 +11,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -19,9 +20,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.platform.LocalContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.audio.AudioHeader
+import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.Tag
 import remix.myplayer.R
 import remix.myplayer.data.model.audio.Song
 import remix.myplayer.ui.theme.LocalTheme
@@ -38,15 +43,30 @@ fun SongDetailDialog() {
   var audioHeader by remember {
     mutableStateOf<AudioHeader?>(null)
   }
+  var tag by remember {
+    mutableStateOf<Tag?>(null)
+  }
+  val scope = rememberCoroutineScope()
+  val context = LocalContext.current
 
   NormalDialog(
     dialogState = state.dialogState,
     title = stringResource(R.string.song_detail),
+    neutral = if (song.isLocal() && tag != null) stringResource(R.string.sync) else null,
+    onNeutral = {
+      tag?.let {
+        scope.launch {
+          Util.syncMediaStoreTags(context, song, it)
+        }
+      }
+    },
     negative = null,
     custom = {
       LazyColumn(
         verticalArrangement = Arrangement.spacedBy(20.dp),
-        modifier = Modifier.padding(top = 18.dp)
+        modifier = Modifier
+          .padding(top = 18.dp)
+          .weight(1f, false)
       ) {
         item {
           DetailItem(R.string.song_path, song.data, true)
@@ -56,6 +76,15 @@ fun SongDetailDialog() {
         }
         item {
           DetailItem(R.string.file_size, stringResource(R.string.cache_size, 1.0f * song.size / MB))
+        }
+        item {
+          DetailItem(R.string.song_tit2, tag?.getFirst(FieldKey.TITLE) ?: song.title)
+        }
+        item {
+          DetailItem(R.string.song_artist, tag?.getFirst(FieldKey.ARTIST) ?: song.artist)
+        }
+        item {
+          DetailItem(R.string.song_album, tag?.getFirst(FieldKey.ALBUM) ?: song.album)
         }
         item {
           DetailItem(
@@ -86,9 +115,11 @@ fun SongDetailDialog() {
   LaunchedEffect(song) {
     if (song.id > 0 && song.isLocal()) {
       try {
-        audioHeader = withContext(Dispatchers.IO) {
-          AudioFileIO.read(File(song.data)).audioHeader
+        val audioFile = withContext(Dispatchers.IO) {
+          AudioFileIO.read(File(song.data))
         }
+        audioHeader = audioFile.audioHeader
+        tag = audioFile.tag
       } catch (ignore: Exception) {
       }
     }

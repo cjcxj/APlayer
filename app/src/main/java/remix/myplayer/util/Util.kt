@@ -38,6 +38,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import dagger.hilt.android.EntryPointAccessors
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import remix.myplayer.App
@@ -48,6 +49,9 @@ import remix.myplayer.misc.floatpermission.rom.RomUtils
 import remix.myplayer.misc.manager.APlayerActivityManager
 import remix.myplayer.ui.activity.base.BaseActivity
 import remix.myplayer.ui.activity.base.PendingWriteRequest
+import remix.myplayer.ui.activity.base.PendingSyncRequest
+import remix.myplayer.data.db.room.entity.MetaDataCache
+import remix.myplayer.di.DaoEntryPoint
 import remix.myplayer.ui.nav.MessageNotifier
 import timber.log.Timber
 import java.io.BufferedReader
@@ -719,6 +723,27 @@ object Util {
       }
 
       audioFile.commit()
+
+      // 更新持久化缓存
+      try {
+        val dao = EntryPointAccessors.fromApplication(context.applicationContext, DaoEntryPoint::class.java).metaDataCacheDao()
+        val existing = dao.get(request.path)
+        dao.insert(MetaDataCache(
+          url = request.path,
+          title = request.fieldMap[FieldKey.TITLE] ?: existing?.title ?: "",
+          artist = request.fieldMap[FieldKey.ARTIST] ?: existing?.artist ?: "",
+          album = request.fieldMap[FieldKey.ALBUM] ?: existing?.album ?: "",
+          duration = existing?.duration ?: 0L,
+          fileSize = existing?.fileSize ?: File(request.path).length(),
+          lastModified = existing?.lastModified ?: File(request.path).lastModified(),
+          year = request.fieldMap[FieldKey.YEAR] ?: existing?.year ?: "",
+          genre = request.fieldMap[FieldKey.GENRE] ?: existing?.genre ?: "",
+          track = request.fieldMap[FieldKey.TRACK] ?: existing?.track ?: ""
+        ))
+      } catch (e: Exception) {
+        Timber.w("Fail to updated MetaDataCache in saveAudioTag: $e")
+      }
+
       MediaScannerConnection.scanFile(
         context,
         arrayOf(request.path), null
@@ -731,4 +756,157 @@ object Util {
         MessageNotifier.show(R.string.save_success)
       }
     }
+
+  suspend fun syncMediaStoreTags(context: Context, song: Song, tag: org.jaudiotagger.tag.Tag) =
+    syncMediaStoreTags(
+      context,
+      song,
+      tag.getFirst(FieldKey.TITLE),
+      tag.getFirst(FieldKey.ARTIST),
+      tag.getFirst(FieldKey.ALBUM)
+    )
+
+  suspend fun syncMediaStoreTags(
+    context: Context,
+    song: Song,
+    title: String,
+    artist: String,
+    album: String
+  ) =
+    withContext(Dispatchers.IO) {
+      val values = ContentValues()
+
+      if (title.isNotEmpty()) values.put(MediaStore.Audio.Media.TITLE, title)
+      if (artist.isNotEmpty()) values.put(MediaStore.Audio.Media.ARTIST, artist)
+      if (album.isNotEmpty()) values.put(MediaStore.Audio.Media.ALBUM, album)
+
+      if (values.size() > 0) {
+        try {
+          val updated = context.contentResolver.update(
+            song.contentUri,
+            values,
+            null,
+            null
+          )
+          // 更新内存状态，确保 UI 立即刷新
+          if (title.isNotEmpty()) song.title = title
+          if (artist.isNotEmpty()) song.artist = artist
+          if (album.isNotEmpty()) song.album = album
+
+          // 保存到持久化缓存，防止 MediaStore 重启后覆盖或扫描失败
+          try {
+            val dao = EntryPointAccessors.fromApplication(context.applicationContext, DaoEntryPoint::class.java).metaDataCacheDao()
+            dao.insert(MetaDataCache(
+              url = song.data,
+              title = title.ifEmpty { song.title },
+              artist = artist.ifEmpty { song.artist },
+              album = album.ifEmpty { song.album },
+              duration = song.duration,
+              fileSize = song.size,
+              lastModified = song.dateModified,
+              year = song.year,
+              genre = song.genre,
+              track = song.track ?: ""
+            ))
+          } catch (e: Exception) {
+            Timber.w("Fail to save to MetaDataCache: $e")
+          }
+
+          withContext(Dispatchers.Main) {
+            MessageNotifier.show(R.string.save_success)
+            if (updated <= 0) {
+              Timber.v("MediaStore update returned 0, but fields were manually updated in memory and DB cache")
+            }
+          }
+        } catch (e: SecurityException) {
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && e is RecoverableSecurityException) {
+            if (context is BaseActivity) {
+              context.pendingSyncRequest = PendingSyncRequest(song, title, artist, album)
+              val intentSenderRequest = androidx.activity.result.IntentSenderRequest.Builder(e.userAction.actionIntent.intentSender).build()
+              context.syncMediaStoreLauncher.launch(intentSenderRequest)
+            }
+          } else {
+            e.printStackTrace()
+          }
+        } catch (e: Exception) {
+          e.printStackTrace()
+          withContext(Dispatchers.Main) {
+            MessageNotifier.show(R.string.save_error)
+          }
+        }
+      }
+    }
+
+  private val scanningUrls = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+  fun autoSyncMetadata(context: Context, songs: List<Song>) {
+    val toScan = songs.filter { song -> 
+      song.isLocal() && !scanningUrls.contains(song.data) 
+    }
+    if (toScan.isEmpty()) return
+
+    toScan.forEach { scanningUrls.add(it.data) }
+
+    remix.myplayer.App.applicationScope.launch(Dispatchers.IO) {
+      toScan.forEach { song ->
+        try {
+          val audioFile = AudioFileIO.read(File(song.data))
+          val tag = audioFile.tag
+          if (tag != null) {
+            syncMediaStoreTagsSilently(context, song, tag)
+          }
+        } catch (e: Exception) {
+          // 忽略单个文件扫描错误
+        }
+      }
+    }
+  }
+
+  private suspend fun syncMediaStoreTagsSilently(
+    context: Context,
+    song: Song,
+    tag: org.jaudiotagger.tag.Tag
+  ) {
+    val title = tag.getFirst(FieldKey.TITLE)
+    val artist = tag.getFirst(FieldKey.ARTIST)
+    val album = tag.getFirst(FieldKey.ALBUM)
+
+    if (title.isEmpty() && artist.isEmpty() && album.isEmpty()) return
+
+    // 更新内存
+    if (title.isNotEmpty()) song.title = title
+    if (artist.isNotEmpty()) song.artist = artist
+    if (album.isNotEmpty()) song.album = album
+
+    // 保存到持久化缓存
+    try {
+      val dao = EntryPointAccessors.fromApplication(context.applicationContext, DaoEntryPoint::class.java).metaDataCacheDao()
+      dao.insert(MetaDataCache(
+        url = song.data,
+        title = title.ifEmpty { song.title },
+        artist = artist.ifEmpty { song.artist },
+        album = album.ifEmpty { song.album },
+        duration = song.duration,
+        fileSize = song.size,
+        lastModified = song.dateModified,
+        year = tag.getFirst(FieldKey.YEAR).ifEmpty { song.year },
+        genre = tag.getFirst(FieldKey.GENRE).ifEmpty { song.genre },
+        track = tag.getFirst(FieldKey.TRACK).ifEmpty { song.track ?: "" }
+      ))
+    } catch (e: Exception) {
+      Timber.w("Fail to save to MetaDataCache silently: $e")
+    }
+
+    // 尝试更新 MediaStore，但不处理权限弹窗（静默处理）
+    try {
+      val values = ContentValues()
+      if (title.isNotEmpty()) values.put(MediaStore.Audio.Media.TITLE, title)
+      if (artist.isNotEmpty()) values.put(MediaStore.Audio.Media.ARTIST, artist)
+      if (album.isNotEmpty()) values.put(MediaStore.Audio.Media.ALBUM, album)
+      if (values.size() > 0) {
+        context.contentResolver.update(song.contentUri, values, null, null)
+      }
+    } catch (ignore: Exception) {
+    }
+  }
 }

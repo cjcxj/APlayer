@@ -12,7 +12,15 @@ import remix.myplayer.data.db.room.dao.MetaDataCacheDao
 import remix.myplayer.data.db.room.dao.PlayListDao
 import remix.myplayer.data.db.room.dao.PlayQueueDao
 import remix.myplayer.data.db.room.dao.WebDavDao
+import remix.myplayer.data.db.room.dao.SmbDao
 import javax.inject.Singleton
+import dagger.hilt.EntryPoint
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface DaoEntryPoint {
+  fun metaDataCacheDao(): MetaDataCacheDao
+}
 
 @InstallIn(SingletonComponent::class)
 @Module

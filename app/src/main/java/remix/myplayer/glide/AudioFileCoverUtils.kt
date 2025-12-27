@@ -21,19 +21,19 @@ object AudioFileCoverUtils {
     }
     // Method 1: use embedded high resolution album art if there is any
     try {
-      val mp3File = MP3File(path)
-      if (mp3File.hasID3v2Tag()) {
-        val art = mp3File.tag.firstArtwork
+      val audioFile = org.jaudiotagger.audio.AudioFileIO.read(File(path))
+      val tag = audioFile.tag
+      if (tag != null) {
+        val art = tag.firstArtwork
         if (art != null) {
           val imageData = art.binaryData
-          return ByteArrayInputStream(imageData)
+          if (imageData != null && imageData.isNotEmpty()) {
+            return ByteArrayInputStream(imageData)
+          }
         }
       }
       // If there are any exceptions, we ignore them and continue to the other fallback method
-    } catch (ignored: ReadOnlyFileException) {
-    } catch (ignored: InvalidAudioFrameException) {
-    } catch (ignored: TagException) {
-    } catch (ignored: IOException) {
+    } catch (ignored: Exception) {
     }
 
     // Method 2: look for album art in external files

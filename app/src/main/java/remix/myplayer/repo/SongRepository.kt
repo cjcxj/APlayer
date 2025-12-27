@@ -13,6 +13,7 @@ import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
+import remix.myplayer.data.db.room.dao.MetaDataCacheDao
 import remix.myplayer.data.db.room.dao.PlayListDao
 import remix.myplayer.data.db.room.entity.PlayList
 import remix.myplayer.data.model.audio.APlayerModel
@@ -25,6 +26,7 @@ import remix.myplayer.data.prefs.SettingPrefs
 import remix.myplayer.misc.checkWorkerThread
 import remix.myplayer.misc.helper.SortOrder
 import remix.myplayer.util.ItemsSorter
+import remix.myplayer.util.Util
 import timber.log.Timber
 import java.util.Calendar
 import java.util.Date
@@ -60,6 +62,7 @@ interface SongRepository {
 class SongRepoImpl @Inject constructor(
   @ApplicationContext private val context: Context,
   private val playListDao: PlayListDao,
+  private val metaDataCacheDao: MetaDataCacheDao,
   private val settingPrefs: SettingPrefs
 ) : SongRepository, AbstractRepository(settingPrefs), CoroutineScope by MainScope() {
 
@@ -85,6 +88,8 @@ class SongRepoImpl @Inject constructor(
           }
         }
       }
+      // 应用持久化覆盖
+      applyOverrides(songs)
     } catch (e: Exception) {
       Timber.v(e)
     }
@@ -92,6 +97,31 @@ class SongRepoImpl @Inject constructor(
       ItemsSorter.sortedSongs(songs, sortOrder)
     } else {
       songs
+    }
+  }
+
+  private fun applyOverrides(songs: List<Song>) {
+    if (songs.isEmpty()) return
+    val urls = songs.map { it.data }
+    val overrides = metaDataCacheDao.getByUrls(urls)
+    val toRepair = mutableListOf<Song>()
+
+    songs.forEach { song ->
+      val cache = overrides.find { it.url == song.data }
+      if (cache != null) {
+        song.title = cache.title
+        song.artist = cache.artist
+        song.album = cache.album
+      } else {
+        // 如果没有缓存记录，且是可能缺失标签的格式 (如 WAV) 或系统库返回的是未知，则加入自动修复队列
+        if (song.isLocal() && (song.data.endsWith(".wav", true) || song.title.lowercase().contains("unknown") || song.artist.lowercase().contains("unknown"))) {
+          toRepair.add(song)
+        }
+      }
+    }
+
+    if (toRepair.isNotEmpty()) {
+      Util.autoSyncMetadata(context, toRepair)
     }
   }
 
@@ -181,6 +211,7 @@ class SongRepoImpl @Inject constructor(
               result.add(resolveSong(songCursor))
             }
           }
+          applyOverrides(result)
         }
 
         is Folder -> {
@@ -247,6 +278,7 @@ class SongRepoImpl @Inject constructor(
         songs.add(resolveSong(songCursor))
       }
     }
+    applyOverrides(songs)
     return songs
   }
 

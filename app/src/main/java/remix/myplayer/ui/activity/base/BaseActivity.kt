@@ -7,6 +7,8 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import com.hjq.permissions.OnPermissionCallback
@@ -18,6 +20,7 @@ import kotlinx.coroutines.launch
 import org.jaudiotagger.tag.FieldKey
 import remix.myplayer.BuildConfig
 import remix.myplayer.R
+import remix.myplayer.data.model.audio.Song
 import remix.myplayer.misc.helper.LanguageHelper.setLocal
 import remix.myplayer.service.MusicService
 import remix.myplayer.ui.nav.MessageNotifier
@@ -39,7 +42,7 @@ open class BaseActivity : ComponentActivity(), CoroutineScope by MainScope() {
   @JvmField
   protected var hasPermission = false
 
-  val deleteSongLauncher =
+  val deleteSongLauncher: ActivityResultLauncher<IntentSenderRequest> =
     registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
       Timber.v("deleteSongLauncher resultCode: ${it.resultCode} data: ${it.data}")
       if (it.resultCode == RESULT_OK) {
@@ -49,7 +52,7 @@ open class BaseActivity : ComponentActivity(), CoroutineScope by MainScope() {
       }
     }
 
-  val writeSongLauncher =
+  val writeSongLauncher: ActivityResultLauncher<IntentSenderRequest> =
     registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
       Timber.v("writeSongLauncher resultCode: ${it.resultCode} data: ${it.data}")
       lifecycleScope.launch {
@@ -62,6 +65,19 @@ open class BaseActivity : ComponentActivity(), CoroutineScope by MainScope() {
     }
 
   var pendingWriteRequest: PendingWriteRequest? = null
+
+  val syncMediaStoreLauncher: ActivityResultLauncher<IntentSenderRequest> =
+    registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
+      if (it.resultCode == RESULT_OK) {
+        lifecycleScope.launch {
+          pendingSyncRequest?.let { request ->
+            Util.syncMediaStoreTags(this@BaseActivity, request.song, request.title, request.artist, request.album)
+          }
+        }
+      }
+    }
+
+  var pendingSyncRequest: PendingSyncRequest? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     hasPermission = PermissionUtil.hasNecessaryPermission()
@@ -190,4 +206,11 @@ open class BaseActivity : ComponentActivity(), CoroutineScope by MainScope() {
 data class PendingWriteRequest(
   val path: String,
   val fieldMap: EnumMap<FieldKey, String>
+)
+
+data class PendingSyncRequest(
+  val song: Song,
+  val title: String,
+  val artist: String,
+  val album: String
 )

@@ -9,6 +9,7 @@ import com.hjq.permissions.XXPermissions
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import remix.myplayer.data.db.room.AppDatabase
 import remix.myplayer.data.prefs.SettingPrefs
@@ -95,6 +96,8 @@ class App : MultiDexApplication() {
     @JvmStatic
     lateinit var context: App
       private set
+
+    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     //是否是googlePlay版本
     val IS_GOOGLEPLAY = BuildConfig.FLAVOR.contains("google")

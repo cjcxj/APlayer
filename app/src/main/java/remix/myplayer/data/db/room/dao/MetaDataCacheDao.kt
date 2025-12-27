@@ -10,10 +10,13 @@ import remix.myplayer.data.db.room.entity.MetaDataCache
 interface MetaDataCacheDao {
 
   @Query("SELECT * FROM MetaDataCache WHERE url = :url")
-  suspend fun get(url: String): MetaDataCache?
+  fun get(url: String): MetaDataCache?
+
+  @Query("SELECT * FROM MetaDataCache WHERE url IN (:urls)")
+  fun getByUrls(urls: List<String>): List<MetaDataCache>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
-  suspend fun insert(cache: MetaDataCache)
+  fun insert(cache: MetaDataCache)
 
   @Query("DELETE FROM MetaDataCache WHERE updateTime < :timestamp")
   suspend fun deleteOldCache(timestamp: Long)

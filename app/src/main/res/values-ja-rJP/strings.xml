@@ -42,6 +42,7 @@
     <string name="plz_input_sharecontent">共有する内容を記入</string>
     <string name="confirm">OK</string>
     <string name="cancel">キャンセル</string>
+  <string name="sync">同期</string>
     <string name="new_playlist">プレイリスト作成</string>
     <string name="create">作成</string>
     <string name="input_playlist_name">プレイリスト名を記入</string>

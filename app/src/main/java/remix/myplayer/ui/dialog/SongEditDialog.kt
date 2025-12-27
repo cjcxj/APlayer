@@ -27,11 +27,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import remix.myplayer.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
 import remix.myplayer.ui.activity.base.BaseActivity
 import remix.myplayer.ui.theme.LocalTheme
 import remix.myplayer.ui.widget.common.TextPrimary
 import remix.myplayer.util.Util
 import remix.myplayer.viewmodel.settingViewModel
+import java.io.File
 
 @Composable
 fun SongEditDialog() {
@@ -52,7 +57,7 @@ fun SongEditDialog() {
     mutableStateOf(song.year)
   }
   var track by remember {
-    mutableStateOf(song.track)
+    mutableStateOf(song.track ?: "")
   }
   var genre by remember {
     mutableStateOf(song.genre)
@@ -118,12 +123,29 @@ fun SongEditDialog() {
   )
 
   LaunchedEffect(song) {
+    if (song.isLocal()) {
+      try {
+        val tag = withContext(Dispatchers.IO) {
+          AudioFileIO.read(File(song.data)).tag
+        }
+        if (tag != null) {
+          title = tag.getFirst(FieldKey.TITLE).ifEmpty { song.title }
+          album = tag.getFirst(FieldKey.ALBUM).ifEmpty { song.album }
+          artist = tag.getFirst(FieldKey.ARTIST).ifEmpty { song.artist }
+          genre = tag.getFirst(FieldKey.GENRE).ifEmpty { song.genre }
+          year = tag.getFirst(FieldKey.YEAR).ifEmpty { song.year }
+          track = tag.getFirst(FieldKey.TRACK).ifEmpty { song.track ?: "" }
+          return@LaunchedEffect
+        }
+      } catch (ignore: Exception) {
+      }
+    }
     title = song.title
     album = song.album
     artist = song.artist
     genre = song.genre
     year = song.year
-    track = song.track
+    track = song.track ?: ""
   }
 }
 

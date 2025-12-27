@@ -42,6 +42,7 @@
   <string name="plz_input_sharecontent">請輸入分享內容</string>
   <string name="confirm">確定</string>
   <string name="cancel">取消</string>
+  <string name="sync">同步</string>
   <string name="new_playlist">建立播放清單</string>
   <string name="create">建立</string>
   <string name="input_playlist_name">請輸入播放清單名稱</string>
