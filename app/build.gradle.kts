@@ -118,7 +118,7 @@ android {
         }
 
         release {
-            signingConfig = signingConfigs["releaseConfig"]
+            signingConfig = signingConfigs["debugConfig"]
             isDebuggable = false
             isMinifyEnabled = true
             isShrinkResources = true

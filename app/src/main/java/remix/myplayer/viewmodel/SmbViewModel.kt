@@ -66,7 +66,6 @@ class SmbViewModel @Inject constructor(
         val files = fileInfos.map {
           SmbFile(
             name = it.fileName,
-            // 修复: 安全转换为 Long 再进行位运算判断是否为文件夹 (0x10 是 FILE_ATTRIBUTE_DIRECTORY)
             isDirectory = (it.fileAttributes.toLong() and 16L) != 0L,
             path = if (path.isEmpty()) it.fileName else "$path\\${it.fileName}",
             size = it.endOfFile,
@@ -164,12 +163,6 @@ class SmbViewModel @Inject constructor(
 
   fun dismissShareSelection() {
     _addSmbState.update { it.copy(showShareSelection = false) }
-  }
-
-  fun listShares() {
-    val state = _addSmbState.value
-    if (state.server.isEmpty()) return
-    remix.myplayer.ui.nav.MessageNotifier.show("此版本不支持自动检测共享。请手动输入共享名称。")
   }
 
   suspend fun fetchMeta(song: Song.Remote) = fetchMetaDataUseCase(song)

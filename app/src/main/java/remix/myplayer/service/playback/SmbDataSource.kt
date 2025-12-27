@@ -60,7 +60,7 @@ class SmbDataSource : BaseDataSource(true) {
                 }
             }
 
-            // ✅ 均衡配置：兼容性优先，兼顾速度
+
             val config = SmbConfig.builder()
                 .withMultiProtocolNegotiate(true) // 恢复自动协商
                 .withSigningRequired(false)       // 关闭签名提速
@@ -90,9 +90,8 @@ class SmbDataSource : BaseDataSource(true) {
                 throw IOException("File not found: $filePath")
             }
 
-            // ✅ 权限设置：解决 Access Denied
             val accessMask: MutableSet<AccessMask> = HashSet()
-            accessMask.add(AccessMask.GENERIC_READ) // 万能读取权限
+            accessMask.add(AccessMask.GENERIC_READ)
 
             val shareMode: MutableSet<SMB2ShareAccess> = HashSet()
             shareMode.add(SMB2ShareAccess.FILE_SHARE_READ)
@@ -115,7 +114,6 @@ class SmbDataSource : BaseDataSource(true) {
                 throw IOException("Position out of range")
             }
 
-            // ✅ 缓冲流：解决卡顿
             val rawStream = smbFile.inputStream
             if (dataSpec.position > 0) {
                 rawStream.skip(dataSpec.position)
