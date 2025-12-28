@@ -354,6 +354,19 @@ class LyricManager @Inject constructor(
       return CurrentNextLyricsLine(LyricLine.LYRICS_LINE_NO_LRC, null, null)
     }
     val progressWithOffset = progress + offset
+    
+    // Handle edge case: progress beyond lyrics duration
+    // This can happen when lyrics finish loading but playback has already progressed past them
+    if (lyrics.isEmpty()) {
+      return CurrentNextLyricsLine.SEARCHING
+    }
+    
+    val lastLyricTime = lyrics.last().time
+    if (progressWithOffset >= lastLyricTime) {
+      // Progress is beyond the last lyric line
+      return CurrentNextLyricsLine(lyrics.last(), 1.0, null)
+    }
+    
     val index = lyrics.binarySearchBy(progressWithOffset) { it.time }.let {
       if (it < 0) -(it + 1) - 1 else it
     }

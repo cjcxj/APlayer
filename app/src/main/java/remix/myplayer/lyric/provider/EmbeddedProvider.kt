@@ -18,7 +18,8 @@ import javax.inject.Singleton
 class EmbeddedProvider @Inject constructor(
   @ApplicationContext
   private val context: Context,
-  private val smbFileCacheManager: remix.myplayer.util.SmbFileCacheManager
+  private val smbFileCacheManager: remix.myplayer.util.SmbFileCacheManager,
+  private val fetchMetaDataUseCase: remix.myplayer.repo.usecase.FetchMetaDataUseCase
 ) : ILyricsProvider {
 
   override val id = LyricOrder.Embedded.toString()
@@ -30,15 +31,17 @@ class EmbeddedProvider @Inject constructor(
       is Song.Remote -> {
         // Support SMB files
         if (song.data.startsWith("smb://")) {
-          // Wait for metadata fetch to complete (it caches the file)
-          // This ensures we reuse the cached file if metadata is still being fetched
-          Timber.d("EmbeddedProvider: waiting for cache or downloading SMB file: ${song.data}")
+          Timber.d("EmbeddedProvider.getLyrics: SMB file detected, waiting for download: ${song.data}")
+          
+          // Get the cached file - this will wait for the file to be fully downloaded
+          // SmbFileCacheManager.getCachedFile() uses Mutex to ensure only one download
+          // and waits for it to complete before returning
           val cachedFile = smbFileCacheManager.getCachedFile(song.data)
-          if (cachedFile != null) {
-            Timber.d("EmbeddedProvider: using cached file: ${cachedFile.absolutePath}")
+          if (cachedFile != null && cachedFile.length() > 0) {
+            Timber.d("EmbeddedProvider.getLyrics: using cached file: ${cachedFile.absolutePath}, size=${cachedFile.length()} bytes")
             cachedFile.absolutePath
           } else {
-            Timber.e("EmbeddedProvider: failed to download SMB file: ${song.data}")
+            Timber.e("EmbeddedProvider.getLyrics: failed to get valid cached file for: ${song.data}")
             throw Exception("Failed to download SMB file for lyrics")
           }
         } else {
@@ -56,9 +59,7 @@ class EmbeddedProvider @Inject constructor(
       if (!uslt.isNullOrEmpty()) {
         lrc = uslt
       }
-    }
-
-    // 如果没有，再尝试扫描所有 TXXX
+    }    // 如果没有，再尝试扫描所有 TXXX
     if (lrc.isNullOrEmpty()) {
       val candidates = audioFile.tag.getFields("TXXX")
       for (f in candidates) {

@@ -43,10 +43,17 @@ class SmbFileCacheManager @Inject constructor(
   suspend fun getCachedFile(smbUrl: String): File? {
     val cacheFile = File(cacheDir, getCacheFileName(smbUrl))
     
-    // Return cached file if exists
+    // Return cached file if exists and is valid (has non-zero size)
     if (cacheFile.exists()) {
-      Timber.d("SMB file already cached: $smbUrl")
-      return cacheFile
+      val fileSize = cacheFile.length()
+      if (fileSize > 0) {
+        Timber.d("SMB file already cached: $smbUrl, size=$fileSize bytes")
+        return cacheFile
+      } else {
+        // Empty file, delete it and re-download
+        Timber.w("SMB file is empty, deleting and re-downloading: $smbUrl")
+        cacheFile.delete()
+      }
     }
 
     // Get or create a mutex for this URL to prevent concurrent downloads
@@ -57,9 +64,14 @@ class SmbFileCacheManager @Inject constructor(
     // Use the mutex to ensure only one download happens per URL
     return mutex.withLock {
       // Double-check: file might have been downloaded by another thread while waiting for lock
-      if (cacheFile.exists()) {
+      if (cacheFile.exists() && cacheFile.length() > 0) {
         Timber.d("SMB file was downloaded by another thread: $smbUrl")
         return@withLock cacheFile
+      }
+
+      // Delete empty file if exists
+      if (cacheFile.exists() && cacheFile.length() == 0L) {
+        cacheFile.delete()
       }
 
       // Download file
@@ -193,13 +205,17 @@ class SmbFileCacheManager @Inject constructor(
                 outputStream.use { output ->
                   val buffer = ByteArray(64 * 1024) // 64KB buffer
                   var bytesRead: Int
+                  var totalBytes = 0L
                   while (input.read(buffer).also { bytesRead = it } != -1) {
                     output.write(buffer, 0, bytesRead)
+                    totalBytes += bytesRead
                   }
+                  output.flush()
                 }
               }
 
-              Timber.d("Downloaded SMB file: $smbUrl -> ${destFile.absolutePath}")
+              val downloadedSize = destFile.length()
+              Timber.d("Downloaded SMB file: $smbUrl -> ${destFile.absolutePath}, size=$downloadedSize bytes")
             } finally {
               file.close()
             }
