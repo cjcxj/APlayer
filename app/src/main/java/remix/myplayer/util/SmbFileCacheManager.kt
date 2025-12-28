@@ -17,6 +17,8 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Manages caching of SMB files for metadata extraction
@@ -28,6 +30,10 @@ class SmbFileCacheManager @Inject constructor(
 
   private val cacheDir: File
     get() = File(context.cacheDir, CACHE_DIR_NAME).apply { mkdirs() }
+
+  // Use Mutex to prevent concurrent downloads of the same file
+  private val downloadLocks = mutableMapOf<String, Mutex>()
+  private val locksMutex = Mutex()
 
   /**
    * Download SMB file to cache if not already cached
@@ -43,14 +49,33 @@ class SmbFileCacheManager @Inject constructor(
       return cacheFile
     }
 
-    // Download file
-    return try {
-      downloadSmbFile(smbUrl, cacheFile)
-      cacheFile
-    } catch (e: Exception) {
-      Timber.e(e, "Failed to download SMB file: $smbUrl")
-      cacheFile.delete() // Clean up partial download
-      null
+    // Get or create a mutex for this URL to prevent concurrent downloads
+    val mutex = locksMutex.withLock {
+      downloadLocks.getOrPut(smbUrl) { Mutex() }
+    }
+
+    // Use the mutex to ensure only one download happens per URL
+    return mutex.withLock {
+      // Double-check: file might have been downloaded by another thread while waiting for lock
+      if (cacheFile.exists()) {
+        Timber.d("SMB file was downloaded by another thread: $smbUrl")
+        return@withLock cacheFile
+      }
+
+      // Download file
+      return@withLock try {
+        downloadSmbFile(smbUrl, cacheFile)
+        cacheFile
+      } catch (e: Exception) {
+        Timber.e(e, "Failed to download SMB file: $smbUrl")
+        cacheFile.delete() // Clean up partial download
+        null
+      } finally {
+        // Clean up the lock when done
+        locksMutex.withLock {
+          downloadLocks.remove(smbUrl)
+        }
+      }
     }
   }
 

@@ -144,11 +144,15 @@ class UriFetcher @Inject constructor(
 
   private fun fetch(song: Song): Uri {
     checkWorkerThread()
+    
     if (song is Song.Remote) {
-      runBlocking {
-        fetchMetaDataUseCase(song)
-      }
+      // Don't call fetchMetaDataUseCase here - MusicService already does it asynchronously
+      // when the song starts playing via onItemTransition()
+      // Just return the embedded: URI which will trigger EmbeddedFetcher
+      // The cached file will be available once metadata fetch completes
+      return (PREFIX_EMBEDDED + song.data).toUri()
     }
+    
     if (song.isLocal()) { // 仅本地歌曲
       if (song.albumId <= 0 || song.id <= 0) {
         return Uri.EMPTY

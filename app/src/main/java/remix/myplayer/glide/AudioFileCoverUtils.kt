@@ -39,20 +39,31 @@ object AudioFileCoverUtils {
         )
         val cacheManager = entryPoint.smbFileCacheManager()
         
-        kotlinx.coroutines.runBlocking {
-          val cachedFile = cacheManager.getCachedFile(path)
-          if (cachedFile != null) {
-            fallback(cachedFile.absolutePath)
-          } else {
-            null
+        kotlin.runCatching {
+          kotlinx.coroutines.runBlocking {
+            cacheManager.getCachedFile(path)
           }
+        }.getOrNull()?.let { cachedFile ->
+          // Extract album art from cached file
+          extractArtworkFromFile(cachedFile.absolutePath)
+        } ?: run {
+          timber.log.Timber.e("Failed to download SMB file for album art: $path")
+          null
         }
       } catch (e: Exception) {
         timber.log.Timber.e(e, "Failed to get album art from SMB file: $path")
         null
       }
+    } else {
+      // Handle local and other remote files
+      return extractArtworkFromFile(path)
     }
-    
+  }
+
+  /**
+   * Extract artwork from a local or accessible file
+   */
+  private fun extractArtworkFromFile(path: String): InputStream? {
     // Method 1: use embedded high resolution album art if there is any
     try {
       val audioFile = org.jaudiotagger.audio.AudioFileIO.read(File(path))
@@ -72,10 +83,12 @@ object AudioFileCoverUtils {
 
     // Method 2: look for album art in external files
     val parent = File(path).parentFile
-    for (fallback in FALLBACKS) {
-      val cover = File(parent, fallback)
-      if (cover.exists()) {
-        return FileInputStream(cover)
+    if (parent != null) {
+      for (fallback in FALLBACKS) {
+        val cover = File(parent, fallback)
+        if (cover.exists()) {
+          return FileInputStream(cover)
+        }
       }
     }
     return null

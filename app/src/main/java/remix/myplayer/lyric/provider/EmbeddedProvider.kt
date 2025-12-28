@@ -9,6 +9,7 @@ import org.jaudiotagger.tag.id3.framebody.FrameBodyTXXX
 import remix.myplayer.data.model.audio.Song
 import remix.myplayer.data.model.misc.LyricOrder
 import remix.myplayer.lyric.LrcParser
+import timber.log.Timber
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -29,8 +30,17 @@ class EmbeddedProvider @Inject constructor(
       is Song.Remote -> {
         // Support SMB files
         if (song.data.startsWith("smb://")) {
+          // Wait for metadata fetch to complete (it caches the file)
+          // This ensures we reuse the cached file if metadata is still being fetched
+          Timber.d("EmbeddedProvider: waiting for cache or downloading SMB file: ${song.data}")
           val cachedFile = smbFileCacheManager.getCachedFile(song.data)
-          cachedFile?.absolutePath ?: throw Exception("Failed to download SMB file for lyrics")
+          if (cachedFile != null) {
+            Timber.d("EmbeddedProvider: using cached file: ${cachedFile.absolutePath}")
+            cachedFile.absolutePath
+          } else {
+            Timber.e("EmbeddedProvider: failed to download SMB file: ${song.data}")
+            throw Exception("Failed to download SMB file for lyrics")
+          }
         } else {
           throw Exception("Remote file lyrics only supported for SMB protocol")
         }
