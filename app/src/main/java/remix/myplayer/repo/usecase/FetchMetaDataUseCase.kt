@@ -21,7 +21,8 @@ import javax.inject.Singleton
 
 @Singleton
 class FetchMetaDataUseCase @Inject constructor(
-  private val metaDataCacheDao: MetaDataCacheDao
+  private val metaDataCacheDao: MetaDataCacheDao,
+  private val smbFileCacheManager: remix.myplayer.util.SmbFileCacheManager
 ) {
 
   private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -82,14 +83,24 @@ class FetchMetaDataUseCase @Inject constructor(
     }
 
     val start = System.currentTimeMillis()
+    
+    // Use JAudioTagger for SMB files to get complete metadata
+    if (song.data.startsWith("smb://")) {
+      try {
+        extractMetadataWithJAudioTagger(song)
+      } catch (e: Exception) {
+        Timber.v("fetchMeta failed with JAudioTagger, data: ${song.data} detail: $e")
+        song.metaFetchState.set(3)
+      } finally {
+        Timber.v("fetchMeta spend:${System.currentTimeMillis() - start} ${song.data}")
+      }
+      return
+    }
+    
+    // Use MediaMetadataRetriever for other remote files (WebDAV, HTTP, etc.)
     val metadataRetriever = MediaMetadataRetriever()
     try {
-      if (song.data.startsWith("smb://") && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        val smbDataSource = SmbMediaDataSource(song.data)
-        metadataRetriever.setDataSource(smbDataSource)
-      } else {
-        metadataRetriever.setDataSource(song.data, song.headers)
-      }
+      metadataRetriever.setDataSource(song.data, song.headers)
       val title =
         metadataRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
           ?: song.title
@@ -155,5 +166,61 @@ class FetchMetaDataUseCase @Inject constructor(
       } catch (ignore: Exception) {
       }
     }
+  }
+  
+  private suspend fun extractMetadataWithJAudioTagger(song: Song.Remote) {
+    // Download SMB file to cache
+    val cachedFile = smbFileCacheManager.getCachedFile(song.data)
+      ?: throw Exception("Failed to download SMB file")
+    
+    // Use JAudioTagger to extract metadata
+    val audioFile = org.jaudiotagger.audio.AudioFileIO.read(cachedFile)
+    val tag = audioFile.tag
+    val audioHeader = audioFile.audioHeader
+    
+    val title = tag?.getFirst(org.jaudiotagger.tag.FieldKey.TITLE)?.takeIf { it.isNotEmpty() }
+      ?: song.title
+    val album = tag?.getFirst(org.jaudiotagger.tag.FieldKey.ALBUM) ?: ""
+    val artist = tag?.getFirst(org.jaudiotagger.tag.FieldKey.ARTIST) ?: ""
+    val duration = (audioHeader?.trackLength?.toLong() ?: 0L) * 1000 // Convert to milliseconds
+    val year = tag?.getFirst(org.jaudiotagger.tag.FieldKey.YEAR) ?: ""
+    val genre = tag?.getFirst(org.jaudiotagger.tag.FieldKey.GENRE) ?: ""
+    val track = tag?.getFirst(org.jaudiotagger.tag.FieldKey.TRACK) ?: ""
+    val dateModified = if (song.dateModified > 0) {
+      song.dateModified
+    } else {
+      cachedFile.lastModified()
+    }
+    
+    // Set bitrate and sample rate
+    song.bitRate = audioHeader?.bitRate ?: ""
+    song.sampleRate = audioHeader?.sampleRate ?: ""
+    
+    song.updateMetaData(
+      title,
+      album,
+      artist,
+      duration,
+      year,
+      genre,
+      track,
+      dateModified
+    )
+    song.metaFetchState.set(2)
+    
+    metaDataCacheDao.insert(
+      MetaDataCache(
+        url = song.data,
+        title = title,
+        artist = artist,
+        album = album,
+        duration = duration,
+        fileSize = song.size,
+        lastModified = dateModified,
+        year = year,
+        genre = genre,
+        track = track
+      )
+    )
   }
 }

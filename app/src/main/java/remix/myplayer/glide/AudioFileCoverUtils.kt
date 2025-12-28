@@ -10,6 +10,15 @@ import java.io.FileInputStream
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface SmbFileCacheManagerEntryPoint {
+  fun smbFileCacheManager(): remix.myplayer.util.SmbFileCacheManager
+}
 
 object AudioFileCoverUtils {
   private val FALLBACKS = arrayOf("cover.jpg", "album.jpg", "folder.jpg", "cover.png", "album.png", "folder.png")
@@ -19,6 +28,31 @@ object AudioFileCoverUtils {
     if (path == null) {
       return null
     }
+    
+    // Handle SMB files
+    if (path.startsWith("smb://")) {
+      return try {
+        // Use Hilt EntryPoint to get SmbFileCacheManager
+        val entryPoint = dagger.hilt.android.EntryPointAccessors.fromApplication(
+          remix.myplayer.App.context,
+          SmbFileCacheManagerEntryPoint::class.java
+        )
+        val cacheManager = entryPoint.smbFileCacheManager()
+        
+        kotlinx.coroutines.runBlocking {
+          val cachedFile = cacheManager.getCachedFile(path)
+          if (cachedFile != null) {
+            fallback(cachedFile.absolutePath)
+          } else {
+            null
+          }
+        }
+      } catch (e: Exception) {
+        timber.log.Timber.e(e, "Failed to get album art from SMB file: $path")
+        null
+      }
+    }
+    
     // Method 1: use embedded high resolution album art if there is any
     try {
       val audioFile = org.jaudiotagger.audio.AudioFileIO.read(File(path))
